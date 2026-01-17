@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pydantic
+numpy
+networkx
+playwright
+passlib
+bcrypt==3.2.2

@@ -55,7 +55,7 @@ async def fetch_web_profile_info(context, username: str) -> Dict[str, Any]:
     return await resp.json()
 
 
-def parse_profile_from_webjson(web_json: Dict[str, Any]) -> Tuple[int, int, int, List[str]]:
+def parse_profile_from_webjson(web_json: Dict[str, Any]) -> Tuple[int, int, int, List[Dict[str, Any]]]:
     user = (web_json.get("data") or {}).get("user") or {}
 
     followers = int(((user.get("edge_followed_by") or {}).get("count")) or 0)
@@ -63,14 +63,26 @@ def parse_profile_from_webjson(web_json: Dict[str, Any]) -> Tuple[int, int, int,
     posts_count = int(((user.get("edge_owner_to_timeline_media") or {}).get("count")) or 0)
 
     edges = ((user.get("edge_owner_to_timeline_media") or {}).get("edges")) or []
-    shortcodes: List[str] = []
+    posts_data: List[Dict[str, Any]] = []
     for e in edges:
         node = (e or {}).get("node") or {}
         sc = node.get("shortcode")
         if sc:
-            shortcodes.append(sc)
+            # Extract likes and comments from the node
+            likes = int(((node.get("edge_liked_by") or {}).get("count")) or 0)
+            comments = int(((node.get("edge_media_to_comment") or {}).get("count")) or 0)
+            timestamp = node.get("taken_at_timestamp", 0)
+            is_video = node.get("is_video", False)
+            
+            posts_data.append({
+                "shortcode": sc,
+                "likes": likes,
+                "comments_count": comments,
+                "timestamp": timestamp,
+                "is_video": is_video
+            })
 
-    return followers, following, posts_count, shortcodes
+    return followers, following, posts_count, posts_data
 
 
 def parse_counts(web_json: Dict[str, Any]) -> Dict[str, int]:
@@ -194,35 +206,95 @@ def compute_profile_metrics(profile: Dict[str, Any]) -> Dict[str, Any]:
 # Post comments (best-effort)
 # ---------------------------
 async def scrape_post_comments(page, shortcode: str, max_comments: int = 30) -> List[Dict[str, str]]:
-    url = f"https://www.instagram.com/p/{shortcode}/"
-    try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-        ensure_logged_in_or_raise(page.url)
-        await page.wait_for_timeout(1200)
-    except PlaywrightTimeoutError:
-        return []
-
+    """
+    Scrape comments from a post. Uses multiple strategies to handle Instagram's changing UI.
+    """
     comments: List[Dict[str, str]] = []
-    candidates = await page.query_selector_all("article ul li")
-
-    for li in candidates:
-        if len(comments) >= max_comments:
-            break
-        user_el = await li.query_selector("a")
-        text_el = await li.query_selector("span")
-        if not user_el or not text_el:
+    
+    # Already on the page from caller, just wait a bit more for comments to load
+    await page.wait_for_timeout(2000)
+    
+    # Try to click "View all comments" button if it exists
+    try:
+        view_all_btn = await page.query_selector('button:has-text("View all"), a:has-text("View all")')
+        if view_all_btn:
+            await view_all_btn.click()
+            await page.wait_for_timeout(1500)
+    except Exception:
+        pass
+    
+    # Strategy 1: Try multiple selectors for comment sections
+    selectors = [
+        "article ul li",  # Old selector
+        'div[role="button"] span',  # Newer Instagram UI
+        'ul li div span',  # Alternative
+        'div h3 + div span',  # Comments after username heading
+    ]
+    
+    for selector in selectors:
+        try:
+            elements = await page.query_selector_all(selector)
+            if elements and len(elements) > 2:  # Found some elements
+                # Try to parse them
+                for el in elements:
+                    if len(comments) >= max_comments:
+                        break
+                    
+                    try:
+                        # Get the parent to find username link
+                        parent = await el.evaluate_handle("el => el.closest('li') || el.parentElement")
+                        if not parent:
+                            continue
+                        
+                        # Find username link
+                        user_link = await parent.as_element().query_selector('a[href^="/"]')
+                        if not user_link:
+                            continue
+                        
+                        username = (await user_link.inner_text() or "").strip()
+                        text = (await el.inner_text() or "").strip()
+                        
+                        # Validation
+                        if not username or not text or len(text) < 1:
+                            continue
+                        if "liked by" in text.lower() or "view all" in text.lower():
+                            continue
+                        if username in text:  # Skip if it's just showing the username
+                            text = text.replace(username, "").strip()
+                        if not text:
+                            continue
+                        
+                        comments.append({"username": username, "text": text})
+                    except Exception:
+                        continue
+                
+                if comments:  # If we found comments, stop trying other selectors
+                    break
+        except Exception:
             continue
-
-        username = (await user_el.inner_text() or "").strip()
-        text = (await text_el.inner_text() or "").strip()
-        if not username or not text:
-            continue
-        if "liked by" in text.lower():
-            continue
-
-        comments.append({"username": username, "text": text})
-
-    # de-dup
+    
+    # Strategy 2: Fallback - parse all text and extract patterns
+    if not comments:
+        try:
+            body_text = await page.inner_text("body")
+            lines = body_text.split('\n')
+            
+            for i, line in enumerate(lines):
+                if len(comments) >= max_comments:
+                    break
+                
+                line = line.strip()
+                # Look for patterns like username followed by text
+                if i + 1 < len(lines) and len(line) < 30 and not line.startswith('@'):
+                    next_line = lines[i + 1].strip()
+                    if len(next_line) > 3 and len(next_line) < 500:
+                        # Heuristic: if current line looks like username and next is comment text
+                        if re.match(r'^[a-zA-Z0-9._]{1,30}$', line):
+                            comments.append({"username": line, "text": next_line})
+        except Exception:
+            pass
+    
+    # De-duplicate
     seen = set()
     out = []
     for c in comments:
@@ -231,6 +303,7 @@ async def scrape_post_comments(page, shortcode: str, max_comments: int = 30) -> 
             continue
         seen.add(key)
         out.append(c)
+    
     return out
 
 
@@ -268,7 +341,7 @@ async def profile_basic(profile_url: str) -> Dict[str, Any]:
 # ---------------------------
 async def profile_audit(profile_url: str, n_posts: int = 30, comments_per_post: int = 30) -> Dict[str, Any]:
     username = extract_username(profile_url)
-    n_posts = max(5, min(int(n_posts), 60))
+    n_posts = max(1, min(int(n_posts), 60))
     comments_per_post = max(0, min(int(comments_per_post), 80))
 
     async with async_playwright() as p:
@@ -282,53 +355,36 @@ async def profile_audit(profile_url: str, n_posts: int = 30, comments_per_post: 
         ensure_logged_in_or_raise(page.url)
 
         web_json = await fetch_web_profile_info(context, username)
-        followers, following, posts_count, shortcodes = parse_profile_from_webjson(web_json)
-        shortcodes = shortcodes[:n_posts]
+        followers, following, posts_count, posts_data = parse_profile_from_webjson(web_json)
+        posts_data = posts_data[:n_posts]
 
         posts: List[Dict[str, Any]] = []
-        for sc in shortcodes:
+        for post_info in posts_data:
+            sc = post_info["shortcode"]
             post_url = f"https://www.instagram.com/p/{sc}/"
-            try:
-                await page.goto(post_url, wait_until="domcontentloaded", timeout=30_000)
-                ensure_logged_in_or_raise(page.url)
-                await page.wait_for_timeout(1200)
-            except PlaywrightTimeoutError:
-                continue
-
+            
+            # Get likes and comments from JSON (already available)
+            likes_count = post_info["likes"]
+            comments_count = post_info["comments_count"]
+            
+            # Convert timestamp to ISO format
             post_date_iso = None
-            time_el = await page.query_selector("time")
-            if time_el:
-                dt = await time_el.get_attribute("datetime")
-                if dt:
-                    post_date_iso = dt
-
-            post_type = "post"
-            canonical = await page.query_selector('link[rel="canonical"]')
-            if canonical:
-                canon_href = await canonical.get_attribute("href") or ""
-                if "/reel/" in canon_href:
-                    post_type = "reel"
-
-            likes_count = 0
-            comments_count = 0
-            try:
-                body_text = await page.inner_text("body")
-            except Exception:
-                body_text = ""
-
-            mlikes = re.search(r"([\d,]+)\s+likes", body_text, re.IGNORECASE)
-            if mlikes:
-                likes_count = int(mlikes.group(1).replace(",", ""))
-
-            mcom = re.search(r"View all\s+([\d,]+)\s+comments", body_text, re.IGNORECASE)
-            if mcom:
-                comments_count = int(mcom.group(1).replace(",", ""))
-            else:
-                lis = await page.query_selector_all("article ul li")
-                if lis:
-                    comments_count = max(0, len(lis) - 1)
-
-            comments = await scrape_post_comments(page, sc, max_comments=comments_per_post)
+            if post_info.get("timestamp"):
+                post_date_iso = datetime.fromtimestamp(post_info["timestamp"]).isoformat() + "Z"
+            
+            # Determine post type
+            post_type = "reel" if post_info.get("is_video") else "post"
+            
+            # Only scrape comments if requested
+            comments = []
+            if comments_per_post > 0:
+                try:
+                    await page.goto(post_url, wait_until="domcontentloaded", timeout=30_000)
+                    ensure_logged_in_or_raise(page.url)
+                    await page.wait_for_timeout(1200)
+                    comments = await scrape_post_comments(page, sc, max_comments=comments_per_post)
+                except PlaywrightTimeoutError:
+                    pass
 
             posts.append({
                 "shortcode": sc,
@@ -460,7 +516,7 @@ async def collect_follower_usernames(page, target_username: str, sample_size: in
 
 async def follower_audit(profile_url: str, sample_size: int = 200, delay_ms: int = 700) -> Dict[str, Any]:
     target_username = extract_username(profile_url)
-    sample_size = max(50, min(int(sample_size), 500))
+    sample_size = max(1, min(int(sample_size), 500))
     delay_ms = max(300, min(int(delay_ms), 2000))
 
     async with async_playwright() as p:
