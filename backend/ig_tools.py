@@ -468,26 +468,67 @@ async def collect_follower_usernames(page, target_username: str, sample_size: in
     profile_url = f"https://www.instagram.com/{target_username}/"
     await page.goto(profile_url, wait_until="domcontentloaded", timeout=30_000)
     ensure_logged_in_or_raise(page.url)
-    await page.wait_for_timeout(1200)
+    await page.wait_for_timeout(2000)
 
-    link = await page.query_selector(f'a[href="/{target_username}/followers/"]') or await page.query_selector('a[href$="/followers/"]')
+    # Try multiple strategies to find and click the followers link
+    link = None
+    
+    # Strategy 1: Direct href match
+    link = await page.query_selector(f'a[href="/{target_username}/followers/"]')
+    
+    # Strategy 2: Try text content "followers"
     if not link:
-        raise RuntimeError("Could not find followers link (IG UI changed).")
+        all_links = await page.query_selector_all('a')
+        for a in all_links:
+            text = await a.inner_text()
+            if text and "followers" in text.lower():
+                link = a
+                break
+    
+    # Strategy 3: Try any link ending with /followers/
+    if not link:
+        link = await page.query_selector('a[href$="/followers/"]')
+    
+    # Strategy 4: Look for the followers count element and find parent link
+    if not link:
+        try:
+            # Instagram often has structure like: <a><span>123</span> followers</a>
+            followers_texts = await page.query_selector_all('text=/followers/')
+            for ft in followers_texts[:3]:  # Check first few matches
+                parent = await ft.evaluate_handle('el => el.closest("a")')
+                if parent:
+                    link = parent.as_element()
+                    break
+        except Exception:
+            pass
+    
+    if not link:
+        raise RuntimeError("Could not find followers link (IG UI changed). Make sure you're logged in and the profile is accessible.")
 
     await link.click()
-    await page.wait_for_timeout(1200)
+    await page.wait_for_timeout(2000)
 
     dialog = await page.query_selector('div[role="dialog"]')
     if not dialog:
         raise RuntimeError("Followers dialog did not open.")
 
-    scroll_box = (
-        await dialog.query_selector("div._aano")
-        or await dialog.query_selector('div[style*="overflow"]')
-        or await dialog.query_selector('div[style*="overflow-y"]')
-    )
+    # Find scroll container with multiple fallback selectors
+    scroll_box = None
+    selectors = [
+        "div._aano",
+        'div[style*="overflow"]',
+        'div[style*="overflow-y"]',
+        'div[role="dialog"] > div > div',  # Common dialog structure
+    ]
+    
+    for sel in selectors:
+        scroll_box = await dialog.query_selector(sel)
+        if scroll_box:
+            break
+    
     if not scroll_box:
-        raise RuntimeError("Could not find followers scroll container (IG UI changed).")
+        # Last resort: use the dialog itself
+        scroll_box = dialog
 
     usernames: List[str] = []
 

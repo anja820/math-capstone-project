@@ -252,7 +252,7 @@ async def ig_profile_basic(req: IgProfileBasicRequest):
 async def ig_profile_audit(req: IgProfileAuditRequest):
     data = await profile_audit(
         req.profile_url,
-        n_posts=max(5, min(int(req.n_posts or 30), 60)),
+        n_posts=max(1, min(int(req.n_posts or 30), 60)),
         comments_per_post=max(0, min(int(req.comments_per_post or 30), 80)),
     )
     return {"ok": True, "data": data}
@@ -262,7 +262,7 @@ async def ig_profile_audit(req: IgProfileAuditRequest):
 async def ig_follower_audit(req: IgFollowerAuditRequest):
     data = await follower_audit(
         req.profile_url,
-        sample_size=max(50, min(int(req.sample_size or 200), 500)),
+        sample_size=max(1, min(int(req.sample_size or 200), 500)),
         delay_ms=max(300, min(int(req.delay_ms or 700), 2000)),
     )
     return {"ok": True, "data": data}
