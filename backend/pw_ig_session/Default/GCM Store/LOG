@@ -1,3 +1,2 @@
-2026/01/10-19:44:42.545 3e74 Reusing MANIFEST C:\Users\kleaa\OneDrive\Desktop\InsightPro\backend\pw_ig_session\Default\GCM Store/MANIFEST-000001
-2026/01/10-19:44:42.547 3e74 Recovering log #3
-2026/01/10-19:44:42.548 3e74 Reusing old log C:\Users\kleaa\OneDrive\Desktop\InsightPro\backend\pw_ig_session\Default\GCM Store/000003.log 
+2026/01/18-00:41:31.751 54ef2 Creating DB /Users/enesago/Downloads/InsightPro/backend/pw_ig_session/Default/GCM Store since it was missing.
+2026/01/18-00:41:31.757 54ef2 Reusing MANIFEST /Users/enesago/Downloads/InsightPro/backend/pw_ig_session/Default/GCM Store/MANIFEST-000001

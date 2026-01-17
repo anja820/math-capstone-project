@@ -555,24 +555,60 @@ async def collect_follower_usernames(page, target_username: str, sample_size: in
     usernames: List[str] = []
 
     async def harvest():
+        # Try multiple strategies to find follower links
         anchors = await dialog.query_selector_all('a[href^="/"]')
+        
         for a in anchors:
-            href = await a.get_attribute("href")
-            if not href:
+            try:
+                href = await a.get_attribute("href")
+                if not href:
+                    continue
+                
+                # Match username pattern: /username/ or /username
+                m = re.match(r"^/([A-Za-z0-9._]+)/?$", href)
+                if m:
+                    u = m.group(1)
+                    # Skip the target user and reserved paths
+                    if u.lower() not in {target_username.lower(), "explore", "reels", "direct", "p", "tv"}:
+                        usernames.append(u)
+            except Exception:
                 continue
-            m = re.match(r"^/([A-Za-z0-9._]+)/$", href)
-            if m:
-                u = m.group(1)
-                if u.lower() != target_username.lower():
-                    usernames.append(u)
 
-    for _ in range(90):
+    # Initial harvest
+    await page.wait_for_timeout(1500)
+    await harvest()
+    print(f"DEBUG: After initial harvest, found {len(usernames)} usernames")
+    
+    # If no usernames found, try waiting longer and harvest again
+    if not usernames:
+        print("DEBUG: No usernames found, waiting longer and trying again...")
+        await page.wait_for_timeout(2000)
         await harvest()
+        print(f"DEBUG: After second harvest, found {len(usernames)} usernames")
+    
+    # Scroll and harvest
+    for i in range(90):
         usernames[:] = list(dict.fromkeys(usernames))
         if len(usernames) >= sample_size:
             break
-        await scroll_box.evaluate("(el) => { el.scrollTop = el.scrollTop + el.clientHeight * 2; }")
-        await page.wait_for_timeout(850)
+        
+        try:
+            # Scroll in multiple ways for better compatibility
+            await scroll_box.evaluate("(el) => { el.scrollTop = el.scrollTop + el.clientHeight * 2; }")
+            await page.wait_for_timeout(850)
+            
+            # Also try scrolling with different methods
+            if i % 3 == 0:
+                await scroll_box.evaluate("(el) => { el.scrollBy(0, 500); }")
+                await page.wait_for_timeout(500)
+        except Exception:
+            pass
+        
+        await harvest()
+        
+        # If still getting 0 after several attempts, break
+        if i > 5 and len(usernames) == 0:
+            break
 
     return usernames[:sample_size]
 
@@ -585,7 +621,7 @@ async def follower_audit(profile_url: str, sample_size: int = 200, delay_ms: int
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(
             user_data_dir=SESSION_DIR,
-            headless=True,
+            headless=False,  # DEBUG: Set to True for production
         )
         page = await context.new_page()
 
