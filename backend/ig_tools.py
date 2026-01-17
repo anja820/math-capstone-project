@@ -505,7 +505,29 @@ async def collect_follower_usernames(page, target_username: str, sample_size: in
     if not link:
         raise RuntimeError("Could not find followers link (IG UI changed). Make sure you're logged in and the profile is accessible.")
 
-    await link.click()
+    # Close any overlays/modals that might be blocking
+    try:
+        # Try to close cookie/notification banners
+        close_btns = await page.query_selector_all('button[aria-label*="Close"], button:has-text("Not Now"), button:has-text("Not now")')
+        for btn in close_btns[:3]:
+            try:
+                await btn.click(timeout=1000)
+                await page.wait_for_timeout(500)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Click the followers link with force option to bypass intercepting elements
+    try:
+        await link.click(force=True, timeout=5000)
+    except Exception:
+        # Fallback: use JavaScript click
+        try:
+            await link.evaluate("el => el.click()")
+        except Exception:
+            raise RuntimeError("Could not click followers link - possibly blocked by an overlay.")
+    
     await page.wait_for_timeout(2000)
 
     dialog = await page.query_selector('div[role="dialog"]')
