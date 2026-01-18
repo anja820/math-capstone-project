@@ -12,6 +12,102 @@ st.set_page_config(page_title="Stats Dashboard", layout="wide")
 # Data directory
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
+# ===========================
+# GENRE CLASSIFICATION
+# ===========================
+GENRE_HASHTAGS = {
+    "Fashion": ["fashion", "style", "ootd", "outfitoftheday", "fashionista", "fashionblogger", "streetstyle", 
+                "fashionstyle", "lookbook", "fashionable", "instafashion", "stylish", "outfit", "dress", "clothing"],
+    
+    "Beauty": ["beauty", "makeup", "skincare", "cosmetics", "makeupartist", "beautyblogger", "makeuptutorial",
+               "beautytips", "makeuplover", "skin", "glam", "lipstick", "eyeshadow", "foundation", "skincareroutine"],
+    
+    "Fitness": ["fitness", "gym", "workout", "fit", "fitnessmotivation", "training", "bodybuilding", "gymlife",
+                "exercise", "health", "muscle", "cardio", "fitfam", "crossfit", "yoga", "running", "weightloss"],
+    
+    "Food": ["food", "foodie", "foodporn", "instafood", "yummy", "delicious", "cooking", "recipe", "chef",
+             "foodblogger", "foodphotography", "foodstagram", "homemade", "dinner", "lunch", "breakfast", "dessert"],
+    
+    "Travel": ["travel", "travelphotography", "wanderlust", "instatravel", "travelgram", "adventure", "explore",
+               "vacation", "trip", "traveling", "tourist", "beach", "nature", "travelblogger", "holiday"],
+    
+    "Music": ["music", "musician", "song", "singer", "band", "concert", "guitar", "piano", "artist", "musicvideo",
+              "musicproducer", "hiphop", "rock", "pop", "jazz", "dj", "rap", "musiclover"],
+    
+    "Gaming": ["gaming", "gamer", "videogames", "game", "games", "playstation", "xbox", "pc", "twitch", "streamer",
+               "esports", "fortnite", "callofduty", "minecraft", "gameplay", "gamingcommunity", "ps5", "nintendo"],
+    
+    "Sports": ["sports", "football", "soccer", "basketball", "baseball", "nfl", "nba", "sports", "athlete",
+               "sportsphotography", "tennis", "golf", "hockey", "cricket", "f1", "boxing", "mma"],
+    
+    "Entertainment": ["entertainment", "movie", "film", "tv", "actor", "actress", "cinema", "hollywood", "netflix",
+                      "comedy", "funny", "memes", "viral", "trending", "celebrity", "drama"],
+    
+    "Lifestyle": ["lifestyle", "life", "daily", "instagood", "photooftheday", "picoftheday", "happy", "love",
+                  "lifestyle blogger", "motivation", "inspiration", "goals", "vibes", "mood"],
+    
+    "Art": ["art", "artist", "artwork", "drawing", "painting", "illustration", "creative", "design", "sketch",
+            "artoftheday", "instaart", "digitalart", "contemporaryart", "fineart", "graphicdesign"],
+    
+    "Photography": ["photography", "photographer", "photo", "photooftheday", "camera", "portrait", "landscape",
+                    "naturephotography", "streetphotography", "photographylovers", "photographyeveryday", "canon", "nikon"],
+    
+    "Technology": ["technology", "tech", "gadgets", "innovation", "ai", "coding", "programming", "developer",
+                   "software", "startup", "entrepreneurship", "business", "digital", "app", "smartphone"],
+    
+    "Education": ["education", "learning", "study", "student", "teacher", "school", "university", "knowledge",
+                  "books", "reading", "science", "history", "educational", "studying", "learn"],
+    
+    "Pets": ["pets", "dog", "cat", "puppy", "kitten", "dogsofinstagram", "catsofinstagram", "petlover", "animal",
+             "cute", "petsofinstagram", "dogstagram", "catstagram", "animals", "petphotography"],
+    
+    "Selfcare": ["selfcare", "wellness", "mentalhealth", "mindfulness", "meditation", "selflove", "healthylifestyle",
+                 "relax", "spa", "beauty", "skincare", "selfcaresunday", "healing", "peace", "gratitude"]
+}
+
+def classify_genre(posts):
+    """
+    Classify account genre based on hashtags from posts
+    Returns: dict with genre scores and top genre
+    """
+    if not posts:
+        return {"top_genre": "Unknown", "scores": {}, "confidence": 0}
+    
+    # Collect all hashtags (lowercase for matching)
+    all_hashtags = []
+    for post in posts:
+        hashtags = [tag.lower() for tag in post.get('hashtags', [])]
+        all_hashtags.extend(hashtags)
+    
+    if not all_hashtags:
+        return {"top_genre": "Unknown", "scores": {}, "confidence": 0}
+    
+    # Count matches for each genre
+    genre_scores = {}
+    for genre, keywords in GENRE_HASHTAGS.items():
+        score = sum(1 for tag in all_hashtags if any(kw in tag for kw in keywords))
+        genre_scores[genre] = score
+    
+    # Find top genre
+    if not any(genre_scores.values()):
+        return {"top_genre": "Unknown", "scores": genre_scores, "confidence": 0}
+    
+    top_genre = max(genre_scores.items(), key=lambda x: x[1])
+    total_matches = sum(genre_scores.values())
+    confidence = (top_genre[1] / total_matches * 100) if total_matches > 0 else 0
+    
+    # Get top 3 genres
+    sorted_genres = sorted(genre_scores.items(), key=lambda x: x[1], reverse=True)[:3]
+    
+    return {
+        "top_genre": top_genre[0],
+        "top_genres": sorted_genres,
+        "scores": genre_scores,
+        "confidence": round(confidence, 1),
+        "total_hashtags": len(all_hashtags),
+        "total_matches": total_matches
+    }
+
 st.title("📊 Analytics Dashboard")
 
 # Check if data directory exists
@@ -169,10 +265,16 @@ def calculate_authenticity_score(profile_data, follower_data=None):
 # Calculate Authenticity Score
 auth_result = calculate_authenticity_score(selected_profile, selected_follower)
 
+# Calculate Genre Classification
+genre_result = None
+if selected_profile:
+    posts = selected_profile.get('posts', [])
+    genre_result = classify_genre(posts)
+
 # Hero Metrics
 st.header("🎯 Authenticity Analysis")
 
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     st.metric(
@@ -195,8 +297,22 @@ with col3:
             "Bot-like Followers",
             f"{selected_follower.get('likely_bot_like_pct', 0)}%"
         )
+with col3:
+    if selected_follower:
+        st.metric(
+            "Bot-like Followers",
+            f"{selected_follower.get('likely_bot_like_pct', 0)}%"
+        )
     else:
         st.info("Run Follower Audit for bot analysis")
+
+with col4:
+    if genre_result:
+        st.metric(
+            "Account Genre",
+            genre_result['top_genre'],
+            delta=f"{genre_result['confidence']}% confidence"
+        )
 
 # Gauge Chart for Authenticity
 fig_gauge = go.Figure(go.Indicator(
@@ -229,6 +345,47 @@ if auth_result['reasons']:
         st.warning(f"• {reason}")
 else:
     st.success("✅ No significant risk factors detected!")
+
+st.divider()
+
+# ===========================
+# GENRE CLASSIFICATION
+# ===========================
+if genre_result and genre_result['top_genre'] != "Unknown":
+    st.header("🎨 Content Genre Analysis")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        # Genre scores chart
+        genre_df = pd.DataFrame([
+            {"Genre": k, "Matches": v} 
+            for k, v in genre_result['scores'].items() if v > 0
+        ]).sort_values('Matches', ascending=False).head(10)
+        
+        fig_genre = px.bar(
+            genre_df,
+            x='Matches',
+            y='Genre',
+            orientation='h',
+            title="Genre Classification (based on hashtags)",
+            color='Matches',
+            color_continuous_scale='viridis'
+        )
+        st.plotly_chart(fig_genre, use_container_width=True)
+    
+    with col2:
+        st.subheader("Top Genres")
+        for i, (genre, score) in enumerate(genre_result['top_genres'], 1):
+            percentage = (score / genre_result['total_matches'] * 100) if genre_result['total_matches'] > 0 else 0
+            if i == 1:
+                st.success(f"🥇 **{genre}** - {score} matches ({percentage:.1f}%)")
+            elif i == 2:
+                st.info(f"🥈 {genre} - {score} matches ({percentage:.1f}%)")
+            elif i == 3:
+                st.info(f"🥉 {genre} - {score} matches ({percentage:.1f}%)")
+        
+        st.caption(f"Analyzed {genre_result['total_hashtags']} hashtags from posts")
 
 st.divider()
 
