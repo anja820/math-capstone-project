@@ -1,9 +1,16 @@
 import streamlit as st
 import requests
 import pandas as pd
+import json
+import os
+from datetime import datetime
 
 # Backend URL (FastAPI)
 BACKEND_URL = "http://127.0.0.1:8001"
+
+# Create data directory if it doesn't exist
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+os.makedirs(DATA_DIR, exist_ok=True)
 
 st.set_page_config(page_title="InsightPro", layout="wide")
 
@@ -236,6 +243,16 @@ if run_profile_scrape:
             st.error(rr.text)
         else:
             pdata = rr.json()["data"]
+            
+            # Save to JSON file
+            username = pdata['username']
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filepath = os.path.join(DATA_DIR, f"profile_audit_{username}_{timestamp}.json")
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(pdata, f, indent=2, ensure_ascii=False)
+            
+            st.success(f"✅ Data saved to: {filepath}")
+            
             st.subheader(f"Scraped profile: @{pdata['username']}")
 
             c1, c2, c3 = st.columns(3)
@@ -253,12 +270,15 @@ if run_profile_scrape:
             st.write("### Latest posts")
             rows = []
             for p in pdata["posts"]:
+                hashtags_str = ", ".join([f"#{tag}" for tag in p.get("hashtags", [])]) if p.get("hashtags") else ""
                 rows.append({
                     "shortcode": p["shortcode"],
                     "date": p.get("date"),
                     "type": p.get("type"),
                     "likes": p.get("likes"),
                     "comments_count": p.get("comments_count"),
+                    "hashtags": hashtags_str,
+                    "caption": p.get("caption", "")[:100] + "..." if p.get("caption") and len(p.get("caption", "")) > 100 else p.get("caption", ""),
                     "url": p.get("url"),
                 })
             st.dataframe(pd.DataFrame(rows))
@@ -289,6 +309,15 @@ if run_followers:
             st.error(rr.text)
         else:
             fdata = rr.json()["data"]
+            
+            # Save to JSON file
+            username = fdata['target_username']
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filepath = os.path.join(DATA_DIR, f"follower_audit_{username}_{timestamp}.json")
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(fdata, f, indent=2, ensure_ascii=False)
+            
+            st.success(f"✅ Data saved to: {filepath}")
             st.success("Done.")
 
             st.metric("Likely bot-like followers (heuristic)", f"{fdata['likely_bot_like_pct']}%")

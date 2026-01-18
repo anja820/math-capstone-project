@@ -375,16 +375,44 @@ async def profile_audit(profile_url: str, n_posts: int = 30, comments_per_post: 
             # Determine post type
             post_type = "reel" if post_info.get("is_video") else "post"
             
-            # Only scrape comments if requested
+            # Scrape caption and comments (visit page for full data)
+            caption = ""
+            hashtags = []
             comments = []
-            if comments_per_post > 0:
+            
+            # Always visit page to get caption/hashtags
+            try:
+                await page.goto(post_url, wait_until="domcontentloaded", timeout=30_000)
+                ensure_logged_in_or_raise(page.url)
+                await page.wait_for_timeout(1200)
+                
+                # Extract caption
                 try:
-                    await page.goto(post_url, wait_until="domcontentloaded", timeout=30_000)
-                    ensure_logged_in_or_raise(page.url)
-                    await page.wait_for_timeout(1200)
-                    comments = await scrape_post_comments(page, sc, max_comments=comments_per_post)
-                except PlaywrightTimeoutError:
+                    # Try multiple selectors for caption
+                    caption_el = (
+                        await page.query_selector('h1 + span') or
+                        await page.query_selector('article span[dir="auto"]') or
+                        await page.query_selector('meta[property="og:description"]')
+                    )
+                    
+                    if caption_el:
+                        if await caption_el.get_attribute("content"):  # meta tag
+                            caption = await caption_el.get_attribute("content") or ""
+                        else:
+                            caption = (await caption_el.inner_text() or "").strip()
+                    
+                    # Extract hashtags from caption
+                    if caption:
+                        hashtags = re.findall(r'#(\w+)', caption)
+                except Exception:
                     pass
+                
+                # Scrape comments if requested
+                if comments_per_post > 0:
+                    comments = await scrape_post_comments(page, sc, max_comments=comments_per_post)
+                    
+            except PlaywrightTimeoutError:
+                pass
 
             posts.append({
                 "shortcode": sc,
@@ -393,6 +421,8 @@ async def profile_audit(profile_url: str, n_posts: int = 30, comments_per_post: 
                 "type": post_type,
                 "likes": likes_count,
                 "comments_count": comments_count,
+                "caption": caption,
+                "hashtags": hashtags,
                 "comments": comments,
             })
 

@@ -31,6 +31,10 @@ ENV/
 backend/pw_ig_session/
 pw_ig_session/
 
+# Scraped data files
+frontend/data/
+data/
+
 # Database files
 *.db
 *.db-journal
