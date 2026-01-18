@@ -73,11 +73,13 @@ The backend provides the following endpoints:
 - `POST /signup` - Create a new user account
 - `POST /login` - Login with email and password
 
-### Instagram Analysis
-- `POST /analyze` - Analyze Instagram profile (manual data input)
+### Instagram Scraping
 - `POST /ig/profile-basic` - Get basic profile information via scraping
 - `POST /ig/profile-audit` - Perform detailed profile audit (posts, comments)
 - `POST /ig/follower-audit` - Audit follower authenticity
+
+### Analysis
+- `POST /analyze` - Analyze Instagram profile using mathematical models (manual data input)
 
 ## Database
 
